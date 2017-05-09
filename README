@@ -4,8 +4,15 @@ Installation:
 - check out the repository: git clone git@github.com:benedictpaten/marginPhase.git
 - check out submodules: cd marginPhase ; git submodule update --init
 - build htsLib (only required once): cd externalTools/htsLib ; autoconf ; autoheader ; ./configure ; make
-- generate Makefile with cmake: cd ../../ ; cmake .
+- make build directory: mkdir build ; cd build
+- generate Makefile with cmake: cmake ..
 - build with make: make
+
+- to run marginPhase: ./marginPhase -b ../examples/NA12878.pb.chr3.100kb.bam -p ../params.json
+
+- to run tests: ./allTests
+(this currently only runs the single newest marginPhase test. To run the ones from before, you can uncomment the line in main in allTests.c)
+
 
 TODOs:
 
