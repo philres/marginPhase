@@ -6,6 +6,15 @@
 
 #include "stRPHmm.h"
 
+void addProfileSeqIdsToSet(stSet *pSeqs, stSet *readIds) {
+    stSetIterator *it = stSet_getIterator(pSeqs);
+    stProfileSeq *pSeq;
+    while((pSeq = stSet_getNext(it)) != NULL) {
+        stSet_insert(readIds, pSeq->readId);
+    }
+    stSet_destructIterator(it);
+}
+
 
 void writeSplitSams(char *bamInFile, char *bamOutBase,
                           stSet *haplotype1Ids, stSet *haplotype2Ids) {

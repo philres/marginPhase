@@ -265,245 +265,6 @@ void printPartitionComposition(int64_t evalPos, stRPHmm *hmm, stSet *reads1, stS
 }
 
 /*
- * Test that a json file is correctly parsed with the jsmn library
- * and that the hmm parameters are set correctly.
- */
-void test_jsmnParsing(CuTest *testCase) {
-
-    char *paramsFile = "../tests/parsingTest.json";
-
-    stBaseMapper *baseMapper = stBaseMapper_construct();
-    stRPHmmParameters *params = parseParameters(paramsFile, baseMapper);
-
-    // Check that alphabet was parsed as expected, and that conversions
-    // between types of bases work properlu
-    CuAssertIntEquals(testCase, baseMapper->size, 5);
-    CuAssertStrEquals(testCase, baseMapper->wildcard, "Nn");
-
-    // Check that numerical bases are mapped to characters correctly
-    CuAssertIntEquals(testCase, stBaseMapper_getCharForValue(baseMapper, 0), 'A');
-    CuAssertIntEquals(testCase, stBaseMapper_getCharForValue(baseMapper, 1), 'C');
-    CuAssertIntEquals(testCase, stBaseMapper_getCharForValue(baseMapper, 2), 'G');
-    CuAssertIntEquals(testCase, stBaseMapper_getCharForValue(baseMapper, 3), 'T');
-    CuAssertIntEquals(testCase, stBaseMapper_getCharForValue(baseMapper, 4), '-');
-
-
-    // Check that character bases are mapped to numbers correctly
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'A'), 0);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'a'), 0);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'C'), 1);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'c'), 1);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'G'), 2);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'g'), 2);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 'T'), 3);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, 't'), 3);
-    CuAssertIntEquals(testCase, stBaseMapper_getValueForChar(baseMapper, '-'), 4);
-
-    // Check stRPHmmParameters
-
-    // Check haplotype substitution model and error model parsed correctly
-    // and that the proper values were set in the model parameters
-    double delta = 0.0001;
-    for (int i = 0; i < 5; i++) {
-        for (int j = 0; j < 5; j++) {
-            if (i < 4 && j < 4) {
-                if (i == j) {
-                    CuAssertDblEquals(testCase, params->hetSubModelSlow[i*5+j], log(0.998), delta);
-                    CuAssertDblEquals(testCase, params->hetSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.998)), delta);
-                    CuAssertDblEquals(testCase, params->readErrorSubModelSlow[i*5+j], log(0.9), delta);
-                    CuAssertDblEquals(testCase, params->readErrorSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.9)), delta);
-                } else {
-                    CuAssertDblEquals(testCase, params->hetSubModelSlow[i*5+j], log(0.000333), delta);
-                    CuAssertDblEquals(testCase, params->hetSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.000333)), delta);
-                    CuAssertDblEquals(testCase, params->readErrorSubModelSlow[i*5+j], log(0.01), delta);
-                    CuAssertDblEquals(testCase, params->readErrorSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.01)), delta);
-                }
-            }
-            else if (i != j) {
-                CuAssertDblEquals(testCase, params->hetSubModelSlow[i*5+j], log(0.001), delta);
-                CuAssertDblEquals(testCase, params->hetSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.001)), delta);
-                CuAssertDblEquals(testCase, params->readErrorSubModelSlow[i*5+j], log(0.07), delta);
-                CuAssertDblEquals(testCase, params->readErrorSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.07)), delta);
-            } else {
-                CuAssertDblEquals(testCase, params->hetSubModelSlow[i*5+j], log(0.996), delta);
-                CuAssertDblEquals(testCase, params->hetSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.996)), delta);
-                CuAssertDblEquals(testCase, params->readErrorSubModelSlow[i*5+j], log(0.72), delta);
-                CuAssertDblEquals(testCase, params->readErrorSubModel[i*5+j], scaleToLogIntegerSubMatrix(log(0.72)), delta);
-            }
-        }
-    }
-    // Check remaining parameters parsed correctly
-    CuAssertTrue(testCase, params->maxNotSumTransitions);
-    CuAssertIntEquals(testCase, params->maxPartitionsInAColumn, 50);
-    CuAssertIntEquals(testCase, params->maxCoverageDepth, 64);
-    CuAssertIntEquals(testCase, params->minReadCoverageToSupportPhasingBetweenHeterozygousSites, 4);
-
-    // cleanup
-    stBaseMapper_destruct(baseMapper);
-    stRPHmmParameters_destruct(params);
-}
-
-/*
- * Test that a bam file is read in correctly.
- * Checks:
- * - Number of reads is correct.
- * - Characters in a read are read correctly.
- * - Profile sequence probabilities are updated correctly.
- * - Soft clipping is handled
- * - Insertions and deletions are handled
- */
-void test_bamReadParsing(CuTest *testCase) {
-
-    char *bamFile = "../tests/NA12878.pb.chr3.5kb.bam";
-    char *paramsFile = "../tests/parsingTest.json";
-
-    stBaseMapper *baseMapper = stBaseMapper_construct();
-    stRPHmmParameters *params = parseParameters(paramsFile, baseMapper);
-
-    // Parse reads for interval
-    st_logInfo("> Parsing input reads\n");
-    stList *profileSequences = stList_construct3(0, (void (*)(void *))stProfileSeq_destruct);
-    int64_t readCount = parseReads(profileSequences, bamFile, baseMapper);
-
-    // Test to see number of reads is correct - should be 149
-    CuAssertIntEquals(testCase, readCount, 149);
-
-    // Test to see first read is being parsed correctly
-    samFile *in = hts_open(bamFile, "r");
-    bam_hdr_t *bamHdr = sam_hdr_read(in);
-    bam1_t *aln = bam_init1();
-
-    // Get first read
-    CuAssertTrue(testCase, sam_read1(in,bamHdr,aln) > 0);
-
-    int64_t pos = aln->core.pos; //left most position of alignment
-    char *chr = bamHdr->target_name[aln->core.tid] ; //contig name (chromosome)
-    int64_t len = aln->core.l_qseq; //length of the read.
-    uint8_t *seq = bam_get_seq(aln);  // DNA sequence
-    char *readName = bam_get_qname(aln);
-    uint32_t *cigar = bam_get_cigar(aln);
-
-
-    int64_t start_read = 0;
-    int64_t end_read = 0;
-    int64_t start_ref = pos;
-    int64_t cig_idx = 0;
-
-    // Find the correct starting locations on the read and reference sequence,
-    // to deal with things like inserts / deletions / soft clipping
-    while(cig_idx < aln->core.n_cigar) {
-        int cigarOp = cigar[cig_idx] & BAM_CIGAR_MASK;
-        int cigarNum = cigar[cig_idx] >> BAM_CIGAR_SHIFT;
-
-        if (cigarOp == BAM_CMATCH || cigarOp == BAM_CEQUAL || cigarOp==BAM_CDIFF) {
-            break;
-        }
-        else if (cigarOp == BAM_CDEL || cigarOp == BAM_CREF_SKIP) {
-            start_ref += cigarNum;
-            cig_idx++;
-        } else if (cigarOp == BAM_CINS || cigarOp == BAM_CSOFT_CLIP) {
-            start_read += cigarNum;
-            cig_idx++;
-        } else if (cigarOp == BAM_CHARD_CLIP || cigarOp == BAM_CPAD) {
-            cig_idx++;
-        } else {
-            st_logCritical("Unidentifiable cigar operation\n");
-        }
-    }
-    // Check for soft clipping at the end
-    int lastCigarOp = cigar[aln->core.n_cigar-1] & BAM_CIGAR_MASK;
-    int lastCigarNum = cigar[aln->core.n_cigar-1] >> BAM_CIGAR_SHIFT;
-    if (lastCigarOp == BAM_CSOFT_CLIP) {
-        end_read += lastCigarNum;
-    }
-    // Count number of insertions & deletions in sequence
-    int64_t numInsertions = 0;
-    int64_t numDeletions = 0;
-    countIndels(cigar, aln->core.n_cigar, &numInsertions, &numDeletions);
-    int64_t trueLength = len-start_read-end_read+numDeletions-numInsertions;
-
-    // Create empty profile sequence
-    stProfileSeq *pSeq = stProfileSeq_constructEmptyProfile(chr, readName, pos, trueLength);
-
-    // Variables to keep track of position in sequence / cigar operations
-    cig_idx = 0;
-    int64_t currPosInOp = 0;
-    int64_t cigarOp = -1;
-    int64_t cigarNum = -1;
-    int64_t idxInSeq = start_read;
-    char *firstMatches = st_calloc(18, sizeof(char));
-    char *lastMatches = st_calloc(29, sizeof(char));
-    // For each position turn character into profile probability
-    // As is, this makes the probability 1 for the base read in, and 0 otherwise
-    for (uint32_t i = 0; i < trueLength; i++) {
-
-        if (currPosInOp == 0) {
-            cigarOp = cigar[cig_idx] & BAM_CIGAR_MASK;
-            cigarNum = cigar[cig_idx] >> BAM_CIGAR_SHIFT;
-        }
-        // Build first and last sequences to check
-        if (cig_idx == 1) {
-            char c = seq_nt16_str[bam_seqi(seq, idxInSeq)];
-            firstMatches[currPosInOp] = c;
-        }
-        else if (cig_idx == aln->core.n_cigar-2) {
-            char c = seq_nt16_str[bam_seqi(seq, idxInSeq)];
-            lastMatches[currPosInOp] = c;
-        }
-
-        if (cigarOp == BAM_CMATCH || cigarOp == BAM_CEQUAL || cigarOp == BAM_CDIFF) {
-            int64_t b = stBaseMapper_getValueForChar(baseMapper, seq_nt16_str[bam_seqi(seq, idxInSeq)]);
-            pSeq->profileProbs[i * ALPHABET_SIZE + b] = ALPHABET_MAX_PROB;
-            idxInSeq++;
-        }
-        else if (cigarOp == BAM_CDEL || cigarOp == BAM_CREF_SKIP) {
-            int64_t b = stBaseMapper_getValueForChar(baseMapper, '-');
-            pSeq->profileProbs[i * ALPHABET_SIZE + b] = ALPHABET_MAX_PROB;
-        } else if (cigarOp == BAM_CINS) {
-            // Currently, ignore insertions
-            idxInSeq++;
-            i--;
-        } else if (cigarOp == BAM_CSOFT_CLIP || cigarOp == BAM_CHARD_CLIP || cigarOp == BAM_CPAD) {
-            // nothing really to do here. skip to next cigar operation
-            currPosInOp = cigarNum-1;
-            i--;
-        } else {
-            st_logCritical("Unidentifiable cigar operation\n");
-        }
-
-        currPosInOp++;
-        if (currPosInOp == cigarNum) {
-            cig_idx++;
-            currPosInOp = 0;
-        }
-    }
-
-    // Cigar string
-    CuAssertIntEquals(testCase, aln->core.n_cigar, 2887);
-    CuAssertIntEquals(testCase, start_read, 76);
-    CuAssertIntEquals(testCase, end_read, 22);
-    CuAssertIntEquals(testCase, numInsertions, 1265);
-    CuAssertIntEquals(testCase, numDeletions, 646);
-
-    // Read info
-    CuAssertIntEquals(testCase, trueLength, 14786);
-    CuAssertStrEquals(testCase, firstMatches, "CCAGTGCTTGACTTACAT");
-    CuAssertStrEquals(testCase, lastMatches, "CACTGCTCTTGTGTACCAGATAAGTAAAA");
-    uint8_t *p = &pSeq->profileProbs[1 * ALPHABET_SIZE];
-    double delta = 0.0001;
-    CuAssertDblEquals(testCase, getProb(p, 0), 0.0, delta);
-    CuAssertDblEquals(testCase, getProb(p, 1), 1.0, delta);
-    CuAssertDblEquals(testCase, getProb(p, 2), 0.0, delta);
-    CuAssertDblEquals(testCase, getProb(p, 3), 0.0, delta);
-    CuAssertDblEquals(testCase, getProb(p, 4), 0.0, delta);
-
-    // Cleanup
-    stBaseMapper_destruct(baseMapper);
-    stRPHmmParameters_destruct(params);
-    stList_destruct(profileSequences);
-}
-
-/*
  * Stores information about relevant test results.
  */
 struct genotypeResults {
@@ -544,13 +305,16 @@ void printGenotypeResults(struct genotypeResults *results) {
     st_logInfo("\t \t(Number of false positives: %" PRIi64 ")\n", results->falsePositives);
 
     // More detailed numbers about errors
-    st_logInfo("\nFalse negatives where partition appears to be bad: %" PRIi64 " \t\t(%f)\n",
+    st_logInfo("\nFalse negatives:\n");
+    st_logInfo("Partition bad: %" PRIi64 " \t\t\t\t(%f)\n",
                results->error_badPartition, (float)results->error_badPartition/results->falseNegatives);
-    st_logInfo("False negatives where true variant appears to be wrong: %" PRIi64 " \t(%f)\n",
+
+    st_logInfo("Involve indels in the ref vcf: %" PRIi64 " \t\t(%f)\n",
+               results->error_missedIndels, (float)results->error_missedIndels/results->falseNegatives);
+
+    st_logInfo("True variant not supported by reads: %" PRIi64 " \t(%f)\n",
                results->error_trueVariantWrong,
                (float)results->error_trueVariantWrong/results->falseNegatives);
-    st_logInfo("False negatives involving indels in the ref vcf: %" PRIi64 " \t\t(%f)\n",
-               results->error_missedIndels, (float)results->error_missedIndels/results->falseNegatives);
 }
 
 /*
@@ -616,14 +380,14 @@ void compareVCFs(FILE *fh, stList *hmms,
         // Unpack reference record
         bcf1_t *unpackedRecordRef = refRecord;
         bcf_unpack(unpackedRecordRef, BCF_UN_INFO);
-        referencePos = unpackedRecordRef->pos;
+        referencePos = unpackedRecordRef->pos+1;
 
         if (maybeFalsePositive && evalPos < referencePos) {
             results->falsePositives++;
             char *evalRefChar = unpackedRecord->d.als;
             char *altEvalChar = unpackedRecord->d.allele[1];
-            st_logDebug("FALSE POSITIVE \n\t pos: %" PRIi64 " ref:%s alt: %s \n",
-                        evalPos+1, evalRefChar, altEvalChar);
+            st_logDebug("\nFALSE POSITIVE \n\t pos: %" PRIi64 " ref:%s alt: %s \n",
+                        evalPos, evalRefChar, altEvalChar);
             printColumnAtPosition(hmm, evalPos);
         }
 
@@ -647,9 +411,6 @@ void compareVCFs(FILE *fh, stList *hmms,
             }
         }
 
-//        fprintf(fh, "***** Ref pos: %d \t", referencePos);
-//        fprintf(fh, "Eval pos: %d\n", evalPos);
-
         results->positives++;
         char *refChar = unpackedRecordRef->d.als;
         char *refAltChar = unpackedRecordRef->d.allele[1];
@@ -658,7 +419,6 @@ void compareVCFs(FILE *fh, stList *hmms,
         // Iterate through vcf until getting to the position of the variant
         // from the reference vcf currently being looked at
         while (evalPos < referencePos) {
-//            fprintf(fh, "true positives + false positives = %d (%d, %d) \trecordCount = %d\n", results->truePositives + results->falsePositives, results->truePositives, results->falsePositives, recordCount);
 
             if (bcf_read(inEval, hdrEval, evalRecord) != 0) {
                 st_logInfo("Error: bcf_read\n");
@@ -667,19 +427,16 @@ void compareVCFs(FILE *fh, stList *hmms,
 
             unpackedRecord = evalRecord;                // unpack record
             bcf_unpack(unpackedRecord, BCF_UN_INFO);
-            evalPos = unpackedRecord->pos;
+            evalPos = unpackedRecord->pos+1;
             char *evalRefChar = unpackedRecord->d.als;
             char *evalAltChar = unpackedRecord->d.allele[1];
             if (evalPos < refStart) continue;           // skip this record
             recordCount++;
 
-//            fprintf(fh, "* READ A LINE.\t ref: %d  eval: %d \n", referencePos, evalPos);
-//            fprintf(fh, " ref:%s alt: %s \n", evalRefChar, evalAltChar);
-
             // Check for false positives - variations found not in reference
             if (evalPos < referencePos) {
                 results->falsePositives++;
-                st_logDebug("FALSE POSITIVE \n\t pos: %" PRIi64 " ref:%s alt: %s \n",
+                st_logDebug("\nFALSE POSITIVE \n\t pos: %" PRIi64 " ref:%s alt: %s \n",
                             evalPos+1, evalRefChar, evalAltChar);
                 printColumnAtPosition(hmm, evalPos);
             } else {
@@ -698,7 +455,7 @@ void compareVCFs(FILE *fh, stList *hmms,
             } else {
                 results->falsePositives++;
                 st_logDebug("INCORRECT POSITIVE \n");
-                st_logDebug("\t pos: %" PRIi64 "\n\tref: %s\talt: ", referencePos+1, refChar);
+                st_logDebug("\t pos: %" PRIi64 "\n\tref: %s\talt: ", referencePos, refChar);
                 for (int i = 1; i < unpackedRecordRef->n_allele; i++) {
                     if (i != 1) st_logDebug( ",");
                     st_logDebug("%s", unpackedRecordRef->d.allele[i]);
@@ -715,23 +472,16 @@ void compareVCFs(FILE *fh, stList *hmms,
             double *read2BaseCounts = getProfileSequenceBaseCompositionAtPosition(reads2, referencePos);
 
             // Print out info about the record and its composition
-            st_logDebug("pos: %" PRIi64 "\n\tref: %s\talt: ", referencePos+1, refChar);
+            st_logDebug("\npos: %" PRIi64 "\n\tref: %s\talt: ", referencePos, refChar);
             for (int i = 1; i < unpackedRecordRef->n_allele; i++) {
                 if (i != 1) st_logDebug(",");
                 st_logDebug("%s", unpackedRecordRef->d.allele[i]);
             }
-//            st_logDebug("\n*POSITION: %d\n", referencePos - gF->refStart);
-//            st_logDebug("gF length: %d \n", gF->length);
-//            st_logDebug("hmm index: %d \n", hmmIndex);
+
             char h1AlphChar = stBaseMapper_getCharForValue(baseMapper, gF->haplotypeString1[referencePos-gF->refStart]);
             char h2AlphChar = stBaseMapper_getCharForValue(baseMapper, gF->haplotypeString2[referencePos-gF->refStart]);
             st_logDebug("\n\toutput alleles: %c, %c\n", h1AlphChar, h2AlphChar);
             printColumnAtPosition(hmm, referencePos);
-            st_logDebug("\tPartition 1: \n");
-            printBaseComposition2(read1BaseCounts);
-            st_logDebug("\tPartition 2: \n");
-            printBaseComposition2(read2BaseCounts);
-            st_logDebug("\tposterior prob: %f\n", gF->genotypeProbs[referencePos-gF->refStart]);
 
 
             // Check if record was an insertion or deletion
@@ -742,8 +492,8 @@ void compareVCFs(FILE *fh, stList *hmms,
 
                 st_logDebug("INSERTION / DELETION!!\n");
                 for (int64_t j = 1; j < indelLen; j++) {
-                    st_logDebug("\tNext pos: %" PRIi64 "\n", referencePos+j+1);
-                    printPartitionComposition(referencePos+j, hmm, reads1, reads2);
+                    st_logDebug("\tNext pos: %" PRIi64 "\n", referencePos+j);
+                    printColumnAtPosition(hmm, referencePos+j);
                 }
             } else {
                 // Quantify the type of false negative it was
@@ -757,22 +507,26 @@ void compareVCFs(FILE *fh, stList *hmms,
                 float fractionRefBase = (read1BaseCounts[refBase] + read2BaseCounts[refBase]) / totalCount;
                 float fractionAltBase = (read1BaseCounts[altBase] + read2BaseCounts[altBase]) / totalCount;
 
-                st_logDebug("\tfraction of reference base seen in reads: %f\n", fractionRefBase);
-                st_logDebug("\tfraction of alternate base seen in reads: %f\n", fractionAltBase);
 
                 if (fractionRefBase < threshold || fractionAltBase < threshold) {
                     results->error_trueVariantWrong++;
                     st_logDebug("   TRUE VARIANT WRONG\n");
                 } else {
                     results->error_badPartition++;
-                    st_logDebug( "   BAD PARTITION\n");
+                    st_logDebug("\tPartition 1: \n");
+                    printBaseComposition2(read1BaseCounts);
+                    st_logDebug("\tPartition 2: \n");
+                    printBaseComposition2(read2BaseCounts);
+                    st_logDebug( "*** BAD PARTITION\n");
                 }
+                st_logDebug("\tfraction of reference base seen in reads: %f\n", fractionRefBase);
+                st_logDebug("\tfraction of alternate base seen in reads: %f\n", fractionAltBase);
             }
+            st_logDebug("\tposterior prob: %f\n", gF->genotypeProbs[referencePos-gF->refStart]);
 
             free(read1BaseCounts);
             free(read2BaseCounts);
         }
-
     }
 
     // Remaining positions after the last variant in the reference are not currently being looked through
@@ -799,7 +553,7 @@ void compareVCFs(FILE *fh, stList *hmms,
  * Performs test to report how well genotypes for the sequence are determined.
  * Reports statistics such as sensitivity and specificity.
  */
-struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vcfOutFile, char *vcfOutFileDiff, char *referenceFile, char *vcfReference, double threshold) {
+struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vcfOutFile, char *vcfOutFileDiff, char *referenceFile, char *vcfReference, double threshold, int64_t iterationsOfParameterLearning) {
 
     st_logInfo("> Parsing parameters\n");
     stBaseMapper *baseMapper = stBaseMapper_construct();
@@ -815,9 +569,14 @@ struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vc
     printSequenceStats(profileSequences);
     printAvgIdentityBetweenProfileSequences(profileSequences, 100);
 
+    st_logInfo("> Creating reference prior probabilities\n");
+    stHash *referenceNamesToReferencePriors = createReferencePriorProbabilities(referenceFile, profileSequences, baseMapper, params);
+
+    st_logInfo("> Learning parameters for HMM model (%" PRIi64 ")\n", iterationsOfParameterLearning);
+    stRPHmmParameters_learnParameters(params, profileSequences, referenceNamesToReferencePriors, iterationsOfParameterLearning);
+
     st_logInfo("> Building hmms\n");
-    stList *hmms = getRPHmms(profileSequences, params);
-    stList_setDestructor(hmms, (void (*)(void *))stRPHmm_destruct2);
+    stList *hmms = getRPHmms(profileSequences, referenceNamesToReferencePriors, params);
     stList *l = stList_construct3(0, (void (*)(void *))stRPHmm_destruct2);
     while(stList_length(hmms) > 0) {
         stList_appendAll(l, stRPHMM_splitWherePhasingIsUncertain(stList_pop(hmms)));
@@ -835,12 +594,12 @@ struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vc
     struct genotypeResults *results = st_calloc(1, sizeof(struct genotypeResults));
     stGenomeFragment *gF;
 
+    // Prep for BAM outputs
+    stSet *read1Ids = stSet_construct3(stHash_stringKey, stHash_stringEqualKey, NULL);
+    stSet *read2Ids = stSet_construct3(stHash_stringKey, stHash_stringEqualKey, NULL);
+
     for(int64_t i=0; i<stList_length(hmms); i++) {
         stRPHmm *hmm = stList_get(hmms, i);
-
-        // Print stats about the HMM
-        st_logDebug("Hmm # %" PRIi64 "\n", i);
-        if (st_getLogLevel() >= debug) stRPHmm_print(hmm, stderr, 0, 0);
 
         // Run the forward-backward algorithm
         stRPHmm_forwardBackward(hmm);
@@ -851,55 +610,70 @@ struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vc
         // Compute the genome fragment
         gF = stGenomeFragment_construct(hmm, path);
 
-        // Get partitioned sequences
-        stSet *reads1 = stRPHmm_partitionSequencesByStatePath(hmm, path, 1);
-        stSet *reads2 = stRPHmm_partitionSequencesByStatePath(hmm, path, 0);
+        // Get the reads which mapped to each path
+        stSet *reads1 = stRPHmm_partitionSequencesByStatePath(hmm, path, true);
+        stSet *reads2 = stRPHmm_partitionSequencesByStatePath(hmm, path, false);
 
-        st_logDebug("\nThere are %" PRIi64 " reads covered by the hmm, bipartitioned into sets of %" PRIi64 " and %" PRIi64 " reads\n",
-                    stList_length(hmm->profileSeqs), stSet_size(reads1), stSet_size(reads2));
 
-        // Print the similarity between the two imputed haplotypes sequences
-        st_logDebug("The haplotypes have an %f identity\n", getIdentityBetweenHaplotypes(gF->haplotypeString1, gF->haplotypeString2, gF->length));
+        addProfileSeqIdsToSet(reads1, read1Ids);
+        addProfileSeqIdsToSet(reads2, read2Ids);
 
-        // Print the base composition of the haplotype sequences
-        double *hap1BaseCounts = getHaplotypeBaseComposition(gF->haplotypeString1, gF->length);
-        st_logDebug("The base composition of haplotype 1:\n");
-        printBaseComposition(hap1BaseCounts);
-        free(hap1BaseCounts);
 
-        double *hap2BaseCounts = getHaplotypeBaseComposition(gF->haplotypeString2, gF->length);
-        st_logDebug("The base composition of haplotype 2:\n");
-        printBaseComposition(hap2BaseCounts);
-        free(hap2BaseCounts);
+        if (st_getLogLevel() >= debug && stList_length(hmms) <= 5) {
+            // Print stats about the HMM
+            st_logDebug("Hmm # %" PRIi64 "\n", i);
+            stRPHmm_print(hmm, stderr, 0, 0);
 
-        // Print the base composition of the reads
-        double *reads1BaseCounts =getExpectedProfileSequenceBaseComposition(reads1);
-        st_logDebug("The base composition of reads1 set:\n");
-        printBaseComposition(reads1BaseCounts);
-        free(reads1BaseCounts);
 
-        double *reads2BaseCounts =getExpectedProfileSequenceBaseComposition(reads2);
-        st_logDebug("The base composition of reads2 set:\n");
-        printBaseComposition(reads2BaseCounts);
-        free(reads2BaseCounts);
+            st_logDebug("\nThere are %" PRIi64 " reads covered by the hmm, bipartitioned into sets of %" PRIi64 " and %" PRIi64 " reads\n",
+                        stList_length(hmm->profileSeqs), stSet_size(reads1), stSet_size(reads2));
 
-        // Print some summary stats about the differences between haplotype sequences and the bipartitioned reads
-        st_logDebug("hap1 vs. reads1 identity: %f\n",
-                getExpectedIdentity(gF->haplotypeString1, gF->refStart, gF->length, reads1));
-        st_logDebug("hap1 vs. reads2 identity: %f\n",
-                getExpectedIdentity(gF->haplotypeString1, gF->refStart, gF->length, reads2));
+            // Print the similarity between the two imputed haplotypes sequences
+            st_logDebug("The haplotypes have an %f identity\n", getIdentityBetweenHaplotypes(gF->haplotypeString1, gF->haplotypeString2, gF->length));
 
-        st_logDebug("hap2 vs. reads2 identity: %f\n",
-                getExpectedIdentity(gF->haplotypeString2, gF->refStart, gF->length, reads2));
-        st_logDebug("hap2 vs. reads1 identity: %f\n",
-                getExpectedIdentity(gF->haplotypeString2, gF->refStart, gF->length, reads1));
+            // Print the base composition of the haplotype sequences
+            double *hap1BaseCounts = getHaplotypeBaseComposition(gF->haplotypeString1, gF->length);
+            st_logDebug("The base composition of haplotype 1:\n");
+            printBaseComposition(hap1BaseCounts);
+            free(hap1BaseCounts);
 
+            double *hap2BaseCounts = getHaplotypeBaseComposition(gF->haplotypeString2, gF->length);
+            st_logDebug("The base composition of haplotype 2:\n");
+            printBaseComposition(hap2BaseCounts);
+            free(hap2BaseCounts);
+
+            // Print the base composition of the reads
+            double *reads1BaseCounts =getExpectedProfileSequenceBaseComposition(reads1);
+            st_logDebug("The base composition of reads1 set:\n");
+            printBaseComposition(reads1BaseCounts);
+            free(reads1BaseCounts);
+
+            double *reads2BaseCounts =getExpectedProfileSequenceBaseComposition(reads2);
+            st_logDebug("The base composition of reads2 set:\n");
+            printBaseComposition(reads2BaseCounts);
+            free(reads2BaseCounts);
+
+            // Print some summary stats about the differences between haplotype sequences and the bipartitioned reads
+            st_logDebug("hap1 vs. reads1 identity: %f\n",
+                        getExpectedIdentity(gF->haplotypeString1, gF->refStart, gF->length, reads1));
+            st_logDebug("hap1 vs. reads2 identity: %f\n",
+                        getExpectedIdentity(gF->haplotypeString1, gF->refStart, gF->length, reads2));
+
+            st_logDebug("hap2 vs. reads2 identity: %f\n",
+                        getExpectedIdentity(gF->haplotypeString2, gF->refStart, gF->length, reads2));
+            st_logDebug("hap2 vs. reads1 identity: %f\n",
+                        getExpectedIdentity(gF->haplotypeString2, gF->refStart, gF->length, reads1));
+
+            stSet_destruct(reads1);
+            stSet_destruct(reads2);
+
+        }
+
+
+        // Write vcf
         writeVcfFragment(vcfOutFP, bcf_hdr, gF, referenceFile, baseMapper, false);
         writeVcfFragment(vcfOutFP_diff, bcf_hdr_diff, gF, referenceFile, baseMapper, true);
 
-        // cleanup for this hmm
-        stSet_destruct(reads1);
-        stSet_destruct(reads2);
         stList_destruct(path);
     }
 
@@ -908,6 +682,10 @@ struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vc
     compareVCFs(stderr, hmms, vcfOutFileDiff, vcfReference, threshold,
                 baseMapper, results);
 
+    char *samOutBase = "test";
+    st_logInfo("\n> Writing out SAM files for each partition into files: %s.1.sam and %s.1.sam\n", samOutBase, samOutBase);
+    writeSplitSams(bamFile, samOutBase, read1Ids, read2Ids);
+
 
     // cleanup
     stRPHmmParameters_destruct(params);
@@ -915,6 +693,8 @@ struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vc
     stList_destruct(hmms);
     stList_destruct(profileSequences);
     stGenomeFragment_destruct(gF);
+    stSet_destruct(read1Ids);
+    stSet_destruct(read2Ids);
 
     bcf_hdr_destroy(bcf_hdr);
     bcf_hdr_destroy(bcf_hdr_diff);
@@ -922,7 +702,21 @@ struct genotypeResults *genotypingTest(char *paramsFile, char *bamFile, char *vc
     return results;
 }
 
+int genotypingTest2(FILE *fh, char *paramsFile, char *bamFile, char *vcfOutFile,
+        char *referenceFile, char *vcfReference, int64_t refStart, int64_t refEnd,
+        bool printVerbose, int64_t iterationsOfParameterLearning) {
 
+    // Run margin phase
+    char *logString = printVerbose ? "--logLevel DEBUG" : "";
+    char *command = stString_print("./marginPhase %s %s %s --params %s --vcfFile %s "
+            "--iterationsOfParameterLearning %" PRIi64 "",
+            bamFile, referenceFile, logString,
+            paramsFile, vcfOutFile, iterationsOfParameterLearning);
+    fprintf(fh, "> Running margin phase with command: %s\n", command);
+    return st_system(command);
+
+    // TODO : Do VCF comparison using VCF eval
+}
 
 void test_5kbGenotyping(CuTest *testCase) {
 
@@ -937,9 +731,13 @@ void test_5kbGenotyping(CuTest *testCase) {
     char *vcfReference = "../tests/NA12878.PG.chr3.100kb.0.vcf";
     double falseNegativeThreshold = 0.20;
 
-    st_logInfo("Testing haplotype inference on %s\n", bamFile);
-    genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
 
+    st_logInfo("Testing haplotype inference on %s\n", bamFile);
+    genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold, 3);
+
+    //int i = genotypingTest2(stderr, paramsFile, bamFile, vcfOutFile, referenceFile, vcfReference, 190000, 195000, 1, 3);
+
+    //CuAssertTrue(testCase, i == 0);
 
 }
 
@@ -950,19 +748,20 @@ void test_100kbGenotyping(CuTest *testCase) {
     char *vcfOutFile = "test_100kb.vcf";
     char *vcfOutFileDiff = "test_100kb_diff.vcf";
     double falseNegativeThreshold = 0.20;
+    int64_t iterationsOfParameterLearning = 1;
 
-    //char *bamFile = "../tests/NA12878.pb.chr3.100kb.0.bam";
-    char *bamFile = "../tests/NA12878.ihs.chr3.100kb.0.bam";
-    //char *vcfReference = "../tests/NA12878.PG.chr3.100kb.2.vcf";
-    char *vcfReference = "../tests/HG001.GRCh37.chr3.100kb.vcf";
+    char *bamFile = "../tests/NA12878.pb.chr3.100kb.2.bam";
+    //char *bamFile = "../tests/NA12878.ihs.chr3.100kb.0.bam";
+    char *vcfReference = "../tests/NA12878.PG.chr3.100kb.2.vcf";
+    //char *vcfReference = "../tests/HG001.GRCh37.chr3.100kb.vcf";
 
     st_logInfo("Testing haplotype inference on %s\n", bamFile);
 
-    struct genotypeResults *results = genotypingTest( paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
+    struct genotypeResults *results = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile,
+                                                     vcfReference, falseNegativeThreshold, iterationsOfParameterLearning);
     printGenotypeResults(results);
 
     free(results);
-
 
 }
 
@@ -975,36 +774,37 @@ void test_multiple100kbGenotyping(CuTest *testCase) {
     char *vcfOutFile = "test_100kb.vcf";
     char *vcfOutFileDiff = "test_100kb_diff.vcf";
     double falseNegativeThreshold = 0.20;
+    int64_t iterationsOfParameterLearning = 0;
 
     char *bamFile = "../tests/NA12878.ihs.chr3.100kb.0.bam";
     char *vcfReference = "../tests/NA12878.PG.chr3.100kb.0.vcf";
     st_logInfo("Testing haplotype inference on %s\n", bamFile);
 
-    struct genotypeResults *results1 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
+    struct genotypeResults *results1 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold, iterationsOfParameterLearning);
 
     bamFile = "../tests/NA12878.ihs.chr3.100kb.1.bam";
     vcfReference = "../tests/NA12878.PG.chr3.100kb.1.vcf";
     st_logInfo("Testing haplotype inference on %s\n", bamFile);
 
-    struct genotypeResults *results2 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
+    struct genotypeResults *results2 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold, iterationsOfParameterLearning);
 
     bamFile = "../tests/NA12878.ihs.chr3.100kb.2.bam";
     vcfReference = "../tests/NA12878.PG.chr3.100kb.2.vcf";
     st_logInfo("Testing haplotype inference on %s\n", bamFile);
 
-    struct genotypeResults *results3 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
+    struct genotypeResults *results3 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold, iterationsOfParameterLearning);
 
     bamFile = "../tests/NA12878.ihs.chr3.100kb.3.bam";
     vcfReference = "../tests/NA12878.PG.chr3.100kb.3.vcf";
     st_logInfo("Testing haplotype inference on %s\n", bamFile);
 
-    struct genotypeResults *results4 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
+    struct genotypeResults *results4 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold, iterationsOfParameterLearning);
 
     bamFile = "../tests/NA12878.ihs.chr3.100kb.4.bam";
     vcfReference = "../tests/NA12878.PG.chr3.100kb.4.vcf";
     st_logInfo("Testing haplotype inference on %s\n", bamFile);
 
-    struct genotypeResults *results5 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold);
+    struct genotypeResults *results5 = genotypingTest(paramsFile, bamFile, vcfOutFile, vcfOutFileDiff, referenceFile, vcfReference, falseNegativeThreshold, iterationsOfParameterLearning);
 
     st_logInfo("***** Test 1 *****\n");
     printGenotypeResults(results1);
@@ -1022,8 +822,6 @@ void test_multiple100kbGenotyping(CuTest *testCase) {
     free(results3);
     free(results4);
     free(results5);
-
-
 }
 
 
@@ -1033,13 +831,10 @@ CuSuite *marginPhaseTestSuite(void) {
     CuSuite* suite = CuSuiteNew();
 
     st_setLogLevelFromString("debug");
+    //st_setLogLevelFromString("info");
 
-//    SUITE_ADD_TEST(suite, test_jsmnParsing);
-//    SUITE_ADD_TEST(suite, test_bamReadParsing);
 //    SUITE_ADD_TEST(suite, test_5kbGenotyping);
     SUITE_ADD_TEST(suite, test_100kbGenotyping);
-
-
 //    SUITE_ADD_TEST(suite, test_multiple100kbGenotyping);
 
     return suite;

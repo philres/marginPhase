@@ -196,6 +196,7 @@ set(SOURCE_FILES
         impl/mergeColumn.c
         impl/partitions.c
         impl/profileSeq.c
+        impl/referencePriorProbs.c
         impl/parser.c
         impl/vcfWriter.c
         impl/samWriter.c
@@ -242,6 +243,6 @@ target_link_libraries(vcfCompare son hts jsmn)
 
 
 enable_testing()
-add_executable(allTests tests/allTests.c tests/marginPhaseTest.c tests/stRPHmmTest.c ${SOURCE_FILES})
+add_executable(allTests tests/allTests.c tests/marginPhaseTest.c tests/stRPHmmTest.c tests/parserTest.c ${SOURCE_FILES})
 target_link_libraries(allTests hts son jsmn)
 add_test(stRPHmm allTests)

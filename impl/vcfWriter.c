@@ -78,6 +78,18 @@ void writeVcfFragment(vcfFile *out, bcf_hdr_t *bcf_hdr, stGenomeFragment *gF, ch
 
     int totalLocs = 0;
 
+    st_logInfo("gF start: %d \t gF end: %d \n", gF->refStart, gF->refStart+gF->length);
+
+    st_logInfo("haplotypeString1: ");
+    for (int z = 0; z < 10; z++) {
+        st_logInfo("%d ", gF->haplotypeString1[z]);
+    }
+    st_logInfo("\nhaplotypeString2: ");
+    for (int z = 0; z < 10; z++) {
+        st_logInfo("%d ", gF->haplotypeString2[z]);
+    }
+    st_logInfo("\n");
+
     // iterate over all positions
     for (int64_t i = 0; i < gF->length; i++) {
 
@@ -90,6 +102,9 @@ void writeVcfFragment(vcfFile *out, bcf_hdr_t *bcf_hdr, stGenomeFragment *gF, ch
         float genotypeProb = gF->genotypeProbs[i];
         float genotype = (float)gF->genotypeString[i];
 
+
+
+
         totalLocs++;
 
         //prep
@@ -99,7 +114,7 @@ void writeVcfFragment(vcfFile *out, bcf_hdr_t *bcf_hdr, stGenomeFragment *gF, ch
         // contig (CHROM)
         bcf_rec->rid = bcf_hdr_name2id(bcf_hdr, gF->referenceName); //defined in a contig in the top
         // POS
-        bcf_rec->pos  = i + gF->refStart; // off by one?
+        bcf_rec->pos  = i + gF->refStart - 1; // off by one?
         // ID - skip
         // QUAL - currently writing out the genotype probability
         bcf_rec->qual = genotypeProb;
@@ -108,7 +123,7 @@ void writeVcfFragment(vcfFile *out, bcf_hdr_t *bcf_hdr, stGenomeFragment *gF, ch
         gt_info[0] = bcf_gt_phased(0);
         gt_info[1] = bcf_gt_phased(1);
 
-        char refChar = toupper(referenceSeq[i + gF->refStart]);
+        char refChar = toupper(referenceSeq[i + gF->refStart - 1]);
         if (!differencesOnly) {
             kputc(refChar, &str); // REF
             kputc(',', &str);

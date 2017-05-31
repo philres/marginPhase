@@ -227,7 +227,7 @@ int64_t parseReads(stList *profileSequences, char *bamFile, stBaseMapper *baseMa
 
     while(sam_read1(in,bamHdr,aln) > 0){
 
-        int64_t pos = aln->core.pos; //left most position of alignment
+        int64_t pos = aln->core.pos+1; //left most position of alignment
         char *chr = bamHdr->target_name[aln->core.tid] ; //contig name (chromosome)
         int64_t len = aln->core.l_qseq; //length of the read.
         uint8_t *seq = bam_get_seq(aln);  // DNA sequence
@@ -300,7 +300,7 @@ int64_t parseReads(stList *profileSequences, char *bamFile, stBaseMapper *baseMa
                 cigarNum = cigar[cig_idx] >> BAM_CIGAR_SHIFT;
             }
             if (cigarOp == BAM_CMATCH || cigarOp == BAM_CEQUAL || cigarOp == BAM_CDIFF) {
-                int64_t b = stBaseMapper_getValueForChar(baseMapper, seq_nt16_str[bam_seqi(seq, idxInSeq)]);
+                int64_t b = stBaseMapper_getValueForChar(baseMapper, seq_nt16_str[bam_seqi(seq, idxInSeq )]);
                 pSeq->profileProbs[i * ALPHABET_SIZE + b] = ALPHABET_MAX_PROB;
                 idxInSeq++;
             }
@@ -324,7 +324,9 @@ int64_t parseReads(stList *profileSequences, char *bamFile, stBaseMapper *baseMa
                 cig_idx++;
                 currPosInOp = 0;
             }
+
         }
+
         stList_append(profileSequences, pSeq);
     }
 
